@@ -55,9 +55,6 @@ contract Party {
     /// @notice Maps a party to the party metadata.
     mapping(uint256 => EventMetadata) idToEventMetadata;
 
-    /// @notice Maps a party to a count of the number of RSVPs.
-    mapping(uint256 => EventMetadata) idToAttendeeCount;
-
     /// @notice Maps a party and attendee to their RSVP stake.
     mapping(uint256 => mapping(address => RsvpStake)) isAndParticipantToRsvpStake;
 
@@ -179,7 +176,7 @@ contract Party {
             revert PartyContract_Event_Does_Not_Exist();
         }
 
-        RsvpStake memory stake = isAndParticipantToRsvpStake[eventId][msg.sender];
+        RsvpStake storage stake = isAndParticipantToRsvpStake[eventId][msg.sender];
 
         if (stake.attending == true) {
             revert PartyContract_Already_RSVPd();
@@ -218,7 +215,7 @@ contract Party {
             revert PartyContract_Event_Does_Not_Exist();
         }
 
-        EventMetadata memory metadata = idToEventMetadata[eventId];
+        EventMetadata storage metadata = idToEventMetadata[eventId];
 
         if (metadata.eventStartDateInSeconds > block.timestamp) {
             revert PartyContract_Event_Has_Not_Started();
@@ -228,7 +225,7 @@ contract Party {
             revert PartyContract_Event_Has_Ended();
         }
 
-        RsvpStake memory stake = isAndParticipantToRsvpStake[eventId][msg.sender];
+        RsvpStake storage stake = isAndParticipantToRsvpStake[eventId][msg.sender];
 
         if (!stake.attending) {
             revert PartyContract_Has_Not_RSVPd();
@@ -250,7 +247,7 @@ contract Party {
      *  3) Can only be executed once the event has ended.
      */
     function withdrawProceeds(uint256 eventId) external {
-        EventMetadata memory metadata = idToEventMetadata[eventId];
+        EventMetadata storage metadata = idToEventMetadata[eventId];
 
         if (!_doesPartyExist(eventId)) {
             revert PartyContract_Event_Does_Not_Exist();
