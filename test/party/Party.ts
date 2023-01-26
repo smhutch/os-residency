@@ -30,7 +30,7 @@ describe("Party", () => {
   let party: Party;
 
   const setupParty = async (
-    wallet: Wallet,
+    wallet: Wallet | SignerWithAddress,
     overrides: Partial<{
       eventName: CreateEventArgs[0];
       maxParticipantsCount: CreateEventArgs[1];
@@ -45,7 +45,7 @@ describe("Party", () => {
       eventName ?? DEFAULT_PARTY_NAME,
       maxParticipantsCount ?? 100,
       rsvpPrice ?? ethToWei(0.1),
-      eventStartDateInSeconds ?? NOT_RELEVANT,
+      eventStartDateInSeconds ?? nowInSeconds() + ONE_HOUR,
       eventDurationInSeconds ?? ONE_HOUR,
     ];
 
@@ -57,7 +57,7 @@ describe("Party", () => {
     party = fixture.party;
   });
 
-  describe.only("createEvent", () => {
+  describe("createEvent", () => {
     it("emits expected event", async () => {
       const eventName = "my event";
       const maxParticipantsCount = 1;
@@ -69,9 +69,11 @@ describe("Party", () => {
 
       const tx = party.connect(signers.host).createEvent(...createEventArgs);
 
+      const expectedEndTime = startTime + duration;
+
       await expect(tx)
         .to.emit(party, "EventCreated")
-        .withArgs(1, signers.host.address, ...createEventArgs);
+        .withArgs(1, signers.host.address, eventName, maxParticipantsCount, rsvpPrice, startTime, expectedEndTime);
     });
 
     it("increments the event ID", async () => {
@@ -87,15 +89,33 @@ describe("Party", () => {
       const expectedId1 = 1;
       const expectedId2 = 2;
 
+      const expectedEndTime = startTime + duration;
+
       await expect(tx1)
         .to.emit(party, "EventCreated")
-        .withArgs(expectedId1, signers.host.address, ...createEventArgs);
+        .withArgs(
+          expectedId1,
+          signers.host.address,
+          "event one",
+          maxParticipantsCount,
+          rsvpPrice,
+          startTime,
+          expectedEndTime,
+        );
 
       const tx2 = party.connect(signers.host).createEvent(...createEventArgs);
 
       await expect(tx2)
         .to.emit(party, "EventCreated")
-        .withArgs(expectedId2, signers.host.address, ...createEventArgs);
+        .withArgs(
+          expectedId2,
+          signers.host.address,
+          "event one",
+          maxParticipantsCount,
+          rsvpPrice,
+          startTime,
+          expectedEndTime,
+        );
     });
 
     it("reverts when max participants is zero", async () => {
@@ -132,17 +152,16 @@ describe("Party", () => {
       const host = signers.host;
       const user = getRandomSigner(0);
 
-      const partyName = "my party";
+      const eventName = "my party";
 
-      const createTx = await party
-        .connect(host)
-        .createEvent(partyName, NOT_RELEVANT, NOT_RELEVANT, NOT_RELEVANT, NOT_RELEVANT);
-      await createTx.wait();
+      await setupParty(host, {
+        eventName,
+      });
 
       const tx = await party.connect(user).getEventMetadata(1);
-      await expect(tx).not.to.be.reverted;
 
-      expect(tx).to.deep.equal([partyName, host.address]);
+      await expect(tx).not.to.be.reverted;
+      expect(tx).to.deep.equal([eventName, host.address]);
     });
 
     it("reverts when party does not exist", async () => {
@@ -210,7 +229,7 @@ describe("Party", () => {
       });
       const tx = party.connect(user).rsvp(1, { value: ethToWei(0.2) });
       await expect(tx)
-        .to.be.revertedWithCustomError(party, "PartyContract_Rsvp_Price_Must_Be_At_Least")
+        .to.be.revertedWithCustomError(party, "PartyContract_Rsvp_Stake_Must_Be_At_Least")
         .withArgs(rsvpPrice);
     });
 
@@ -238,17 +257,80 @@ describe("Party", () => {
   describe("checkIn", () => {
     let attendingUser: Wallet;
     let notAttendingUser: Wallet;
+    let randomUser: Wallet;
 
     beforeEach(async () => {
       attendingUser = await getTestUserWithEth(0);
       notAttendingUser = await getTestUserWithEth(1);
+      randomUser = await getTestUserWithEth(2);
     });
 
     it("reverts when party does not exist", async () => {
-      await expect(party.connect(attendingUser).rsvp(INVALID_PARTY_ID)).to.revertedWithCustomError(
+      await expect(party.connect(attendingUser).checkIn(INVALID_PARTY_ID)).to.revertedWithCustomError(
         party,
         "PartyContract_Event_Does_Not_Exist",
       );
+    });
+
+    describe("when event has not started", () => {
+      beforeEach(async () => {
+        const now = nowInSeconds();
+        const startTime = now + daysInSeconds(1);
+
+        await setupParty(signers.host, {
+          eventStartDateInSeconds: startTime,
+        });
+      });
+
+      it("reverts with custom error", async () => {
+        const tx = party.connect(randomUser).checkIn(1);
+        await expect(tx).to.be.revertedWithCustomError(party, "PartyContract_Event_Has_Not_Started");
+      });
+    });
+
+    describe("when event has ended", () => {
+      beforeEach(async () => {
+        const now = nowInSeconds();
+
+        // Create an event that starts in one hour, and lasts for one day
+        const startTime = now + hoursInSeconds(1);
+        const duration = daysInSeconds(1);
+        await setupParty(signers.host, {
+          eventStartDateInSeconds: startTime,
+          eventDurationInSeconds: duration,
+        });
+
+        // Advance time by two days (well after the event has ended)
+        await ethers.provider.send("evm_increaseTime", [daysInSeconds(2)]);
+      });
+
+      it("reverts with custom error", async () => {
+        const tx = party.connect(randomUser).checkIn(1);
+
+        await expect(tx).to.be.revertedWithCustomError(party, "PartyContract_Event_Has_Ended");
+      });
+    });
+
+    describe("when event is currently in progress", () => {
+      beforeEach(async () => {
+        const now = nowInSeconds();
+
+        // Create an event that starts in one hour, and lasts for one day
+        const startTime = now + hoursInSeconds(1);
+        const duration = daysInSeconds(1);
+        await setupParty(signers.host, {
+          eventStartDateInSeconds: startTime,
+          eventDurationInSeconds: duration,
+        });
+
+        // Advance time by two hours (during the event interval)
+        await ethers.provider.send("evm_increaseTime", [hoursInSeconds(2)]);
+      });
+
+      it("reverts when account has not rsvp'd", async () => {
+        const tx = party.connect(randomUser).checkIn(1);
+        await expect(tx).to.be.revertedWithCustomError(party, "PartyContract_Has_Not_RSVPd");
+      });
     });
   });
 

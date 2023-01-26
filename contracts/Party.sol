@@ -8,8 +8,9 @@ error PartyContract_Event_Does_Not_Exist();
 
 // Create errors
 error PartyContract_Event_Must_Allow_Participants();
-error PartyContract_Rsvp_Price_Must_Be_Set();
+error PartyContract_Event_Must_Be_In_The_Future();
 error PartyContract_Event_Must_Have_Duration();
+error PartyContract_Rsvp_Price_Must_Be_Set();
 
 // Rsvp errors
 error PartyContract_Already_Checked_In();
@@ -17,13 +18,12 @@ error PartyContract_Already_RSVPd();
 error PartyContract_Event_Is_Full();
 error PartyContract_Rsvp_Stake_Must_Be_At_Least(uint256 rsvpPrice);
 
+// Check-in errors
+error PartyContract_Has_Not_RSVPd();
+
 // Time errors
 error PartyContract_Event_Has_Ended();
 error PartyContract_Event_Has_Not_Started();
-
-// TODO: add these
-error PartyContract_Event_Must_Be_In_The_Future();
-error PartyContract_Event_Not_Started();
 
 contract Party {
     /// @notice Tracks the next sequence ID to be assigned to a party.
@@ -36,10 +36,10 @@ contract Party {
         uint256 maxParticipantCount;
         /** amount in ETH to rsvp for the event */
         uint256 rsvpPrice;
-        /** @notice start date of the event, at which participants can check-in */
+        /** @notice start date of the event */
         uint256 eventStartDateInSeconds;
-        /** @notice duration from the start date to the end of the event */
-        uint256 eventDurationInSeconds;
+        /** @notice end datet of the event */
+        uint256 eventEndDateInSeconds;
     }
 
     struct RsvpStake {
@@ -66,8 +66,8 @@ contract Party {
      * @param name of the event
      * @param maxParticipantCount max number of participants allowed in the event
      * @param rsvpPrice amount in ETH to rsvp for the event
-     * @param eventStartDateInSeconds start date of the event, at which participants can check-in
-     * @param eventDurationInSeconds duration from the start date to the end of the event
+     * @param eventStartDateInSeconds start date of the event. Participants can only check-in after this time.
+     * @param eventEndDateInSeconds start date of the event. Participants cannot check-in after this time.
      */
     event EventCreated(
         uint256 id,
@@ -76,7 +76,7 @@ contract Party {
         uint256 maxParticipantCount,
         uint256 rsvpPrice,
         uint256 eventStartDateInSeconds,
-        uint256 eventDurationInSeconds
+        uint256 eventEndDateInSeconds
     );
 
     /**
@@ -117,13 +117,15 @@ contract Party {
             revert PartyContract_Event_Must_Allow_Participants();
         }
 
+        if (eventDurationInSeconds == 0) {
+            revert PartyContract_Event_Must_Have_Duration();
+        }
+
         if (eventStartDateInSeconds < block.timestamp) {
             revert PartyContract_Event_Must_Be_In_The_Future();
         }
 
-        if (eventDurationInSeconds == 0) {
-            revert PartyContract_Event_Must_Have_Duration();
-        }
+        uint256 eventEndDateInSeconds = eventStartDateInSeconds + eventDurationInSeconds;
 
         EventMetadata memory party = EventMetadata({
             name: eventName,
@@ -132,7 +134,7 @@ contract Party {
             maxParticipantCount: maxParticipantCount,
             rsvpPrice: rsvpPrice,
             eventStartDateInSeconds: eventStartDateInSeconds,
-            eventDurationInSeconds: eventDurationInSeconds
+            eventEndDateInSeconds: eventEndDateInSeconds
         });
 
         idToEventMetadata[id] = party;
@@ -144,7 +146,7 @@ contract Party {
             party.maxParticipantCount,
             party.rsvpPrice,
             party.eventStartDateInSeconds,
-            party.eventDurationInSeconds
+            party.eventEndDateInSeconds
         );
 
         return id;
@@ -218,10 +220,16 @@ contract Party {
             revert PartyContract_Event_Has_Not_Started();
         }
 
-        // TODO: revert if the event has not started yet
-        // TODO: revert if the event has ended
-        // TODO: get the rsvp'd stake for the participant
-        // TODO: revert if they did not rsvp
+        if (block.timestamp > metadata.eventEndDateInSeconds) {
+            revert PartyContract_Event_Has_Ended();
+        }
+
+        RsvpStake memory stake = isAndParticipantToRsvpStake[eventId][msg.sender];
+
+        if (!stake.attending) {
+            revert PartyContract_Has_Not_RSVPd();
+        }
+
         // TODO: return their stake, if it's non-zero
         // TODO: emit checked in
     }
