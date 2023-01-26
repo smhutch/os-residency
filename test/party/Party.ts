@@ -183,7 +183,7 @@ describe("Party", () => {
       });
       const tx = party.connect(user).rsvp(1, { value: 0 });
       await expect(tx).not.to.be.reverted;
-      await expect(tx).to.emit(party, "AttendeeReplied").withArgs(1, user.address, 0);
+      await expect(tx).to.emit(party, "ParticipantConfirmedAttendance").withArgs(1, user.address, 0);
     });
 
     it("supports rsvp'ing to paid events", async () => {
@@ -194,7 +194,7 @@ describe("Party", () => {
       });
       const tx = party.connect(user).rsvp(1, { value: rsvpPrice.toString() });
       await expect(tx).not.to.be.reverted;
-      await expect(tx).to.emit(party, "AttendeeReplied").withArgs(1, user.address, rsvpPrice);
+      await expect(tx).to.emit(party, "ParticipantConfirmedAttendance").withArgs(1, user.address, rsvpPrice);
     });
 
     it("reverts when party does not exist", async () => {

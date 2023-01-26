@@ -85,8 +85,7 @@ contract Party {
      * @param participant who RSVPd
      * @param rsvpStake amount of eth staked, which will be zero for free events
      */
-    // TODO: Rename to ParticipantConfirmedAttendance
-    event AttendeeReplied(uint256 eventId, address participant, uint256 rsvpStake);
+    event ParticipantConfirmedAttendance(uint256 eventId, address participant, uint256 rsvpStake);
 
     /**
      * @notice Emitted when an account checks-in to an event.
@@ -199,7 +198,7 @@ contract Party {
         metadata.currentParticipantCount++;
         isAndParticipantToRsvpStake[eventId][msg.sender] = RsvpStake({ amount: msg.value, attending: true });
 
-        emit AttendeeReplied(eventId, msg.sender, msg.value);
+        emit ParticipantConfirmedAttendance(eventId, msg.sender, msg.value);
     }
 
     /**
