@@ -3,16 +3,27 @@ pragma solidity >=0.8.4;
 
 import "hardhat/console.sol";
 
+// Generic errors
+error PartyContract_Event_Does_Not_Exist();
+
+// Create errors
+error PartyContract_Event_Must_Allow_Participants();
+error PartyContract_Rsvp_Price_Must_Be_Set();
+error PartyContract_Event_Must_Have_Duration();
+
+// Rsvp errors
 error PartyContract_Already_Checked_In();
 error PartyContract_Already_RSVPd();
-error PartyContract_Event_Does_Not_Exist();
+error PartyContract_Event_Is_Full();
+error PartyContract_Rsvp_Stake_Must_Be_At_Least(uint256 rsvpPrice);
+
+// Time errors
 error PartyContract_Event_Has_Ended();
-error PartyContract_Event_Must_Allow_Participants();
+error PartyContract_Event_Has_Not_Started();
+
+// TODO: add these
 error PartyContract_Event_Must_Be_In_The_Future();
-error PartyContract_Event_Must_Have_Duration();
 error PartyContract_Event_Not_Started();
-error PartyContract_Rsvp_Price_Must_Be_At_Least(uint256 rsvpPrice);
-error PartyContract_Rsvp_Price_Must_Be_Set();
 
 contract Party {
     /// @notice Tracks the next sequence ID to be assigned to a party.
@@ -21,6 +32,7 @@ contract Party {
     struct EventMetadata {
         string name;
         address organizer;
+        uint256 currentParticipantCount;
         uint256 maxParticipantCount;
         /** amount in ETH to rsvp for the event */
         uint256 rsvpPrice;
@@ -30,11 +42,21 @@ contract Party {
         uint256 eventDurationInSeconds;
     }
 
+    struct RsvpStake {
+        /** @notice Amount of eth staked. Will be zero for free events */
+        uint256 amount;
+        /** @notice Has the user rsvp'd? This is exists to support free events */
+        bool attending;
+    }
+
     /// @notice Maps a party to the party metadata.
     mapping(uint256 => EventMetadata) idToEventMetadata;
 
+    /// @notice Maps a party to a count of the number of RSVPs.
+    mapping(uint256 => EventMetadata) idToAttendeeCount;
+
     /// @notice Maps a party and attendee to their RSVP stake.
-    mapping(uint256 => mapping(address => uint256)) idAndAttendeeToStakedAmount;
+    mapping(uint256 => mapping(address => RsvpStake)) isAndParticipantToRsvpStake;
 
     /**
      * @notice Emitted when an event is created.
@@ -57,7 +79,20 @@ contract Party {
         uint256 eventDurationInSeconds
     );
 
-    event AttendeeReplied(uint256 eventId, address attendee, uint256 rsvpStake);
+    /**
+     * @notice Emitted when an account RSVPs for an event.
+     * @param eventId of the event
+     * @param participant who RSVPd
+     * @param rsvpStake amount of eth staked, which will be zero for free events
+     */
+    event AttendeeReplied(uint256 eventId, address participant, uint256 rsvpStake);
+
+    /**
+     * @notice Emitted when an account checks-in to an event.
+     * @param eventId of the event
+     * @param participant who RSVPd
+     */
+    event AttendeeCheckedIn(uint256 eventId, address participant);
 
     constructor() {}
 
@@ -82,6 +117,10 @@ contract Party {
             revert PartyContract_Event_Must_Allow_Participants();
         }
 
+        if (eventStartDateInSeconds < block.timestamp) {
+            revert PartyContract_Event_Must_Be_In_The_Future();
+        }
+
         if (eventDurationInSeconds == 0) {
             revert PartyContract_Event_Must_Have_Duration();
         }
@@ -89,6 +128,7 @@ contract Party {
         EventMetadata memory party = EventMetadata({
             name: eventName,
             organizer: msg.sender,
+            currentParticipantCount: 0,
             maxParticipantCount: maxParticipantCount,
             rsvpPrice: rsvpPrice,
             eventStartDateInSeconds: eventStartDateInSeconds,
@@ -129,33 +169,34 @@ contract Party {
      * @param eventId The id of the event.
      */
     function rsvp(uint256 eventId) external payable {
-        EventMetadata memory metadata = idToEventMetadata[eventId];
-
         if (!_doesPartyExist(eventId)) {
             revert PartyContract_Event_Does_Not_Exist();
         }
 
-        uint256 stakedAmount = idAndAttendeeToStakedAmount[eventId][msg.sender];
+        RsvpStake memory stake = isAndParticipantToRsvpStake[eventId][msg.sender];
 
-        if (stakedAmount != 0) {
+        if (stake.attending == true) {
             revert PartyContract_Already_RSVPd();
         }
+
+        EventMetadata storage metadata = idToEventMetadata[eventId];
 
         if (metadata.rsvpPrice > 0 && msg.value == 0) {
             revert PartyContract_Rsvp_Price_Must_Be_Set();
         }
 
         if (metadata.rsvpPrice > 0 && msg.value < metadata.rsvpPrice) {
-            revert PartyContract_Rsvp_Price_Must_Be_At_Least(metadata.rsvpPrice);
+            revert PartyContract_Rsvp_Stake_Must_Be_At_Least(metadata.rsvpPrice);
         }
 
-        idAndAttendeeToStakedAmount[eventId][msg.sender] = msg.value;
+        if (metadata.currentParticipantCount >= metadata.maxParticipantCount) {
+            revert PartyContract_Event_Is_Full();
+        }
 
-        // TODO: actually stake the ETH...
+        metadata.currentParticipantCount++;
+        isAndParticipantToRsvpStake[eventId][msg.sender] = RsvpStake({ amount: msg.value, attending: true });
 
         emit AttendeeReplied(eventId, msg.sender, msg.value);
-
-        // TODO
     }
 
     /**
@@ -167,17 +208,22 @@ contract Party {
      *  3) If check-in is successful, the staked ETH should be returned back to the participant.
      */
     function checkIn(uint256 eventId) external payable {
-        EventMetadata memory metadata = idToEventMetadata[eventId];
-
         if (!_doesPartyExist(eventId)) {
             revert PartyContract_Event_Does_Not_Exist();
         }
 
-        // TODO
-        // check if the event exists
-        // check if the event is within the start and end time
-        // check if the msg.sender is the rsvp'd participant
-        // if all checks pass, return the staked ETH to the participant
+        EventMetadata memory metadata = idToEventMetadata[eventId];
+
+        if (metadata.eventStartDateInSeconds > block.timestamp) {
+            revert PartyContract_Event_Has_Not_Started();
+        }
+
+        // TODO: revert if the event has not started yet
+        // TODO: revert if the event has ended
+        // TODO: get the rsvp'd stake for the participant
+        // TODO: revert if they did not rsvp
+        // TODO: return their stake, if it's non-zero
+        // TODO: emit checked in
     }
 
     /**
