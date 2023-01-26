@@ -247,13 +247,14 @@ contract Party {
      *  3) Can only be executed once the event has ended.
      */
     function withdrawProceeds(uint256 eventId) external {
-        EventMetadata storage metadata = idToEventMetadata[eventId];
-
         if (!_doesPartyExist(eventId)) {
             revert PartyContract_Event_Does_Not_Exist();
         }
 
-        // TODO
+        // EventMetadata storage metadata = idToEventMetadata[eventId];
+
+        // TODO: check if msg.sender is the organizer
+        // TODO: think about how to find all participants that did not check-in
     }
 
     /**
