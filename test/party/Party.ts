@@ -1,7 +1,7 @@
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import type { SignerWithAddress } from "@nomiclabs/hardhat-ethers/dist/src/signer-with-address";
 import { expect } from "chai";
-import { Wallet } from "ethers";
+import { BigNumber, ContractReceipt, Wallet } from "ethers";
 import { ethers } from "hardhat";
 import { ONE_HOUR, getRandomSigner, setETHBalance } from "hardhat-helpers";
 
@@ -282,7 +282,7 @@ describe("Party", () => {
         });
       });
 
-      it("reverts with custom error", async () => {
+      it("reverts", async () => {
         const tx = party.connect(randomUser).checkIn(1);
         await expect(tx).to.be.revertedWithCustomError(party, "PartyContract_Event_Has_Not_Started");
       });
@@ -304,7 +304,7 @@ describe("Party", () => {
         await ethers.provider.send("evm_increaseTime", [daysInSeconds(2)]);
       });
 
-      it("reverts with custom error", async () => {
+      it("reverts", async () => {
         const tx = party.connect(randomUser).checkIn(1);
 
         await expect(tx).to.be.revertedWithCustomError(party, "PartyContract_Event_Has_Ended");
@@ -312,7 +312,10 @@ describe("Party", () => {
     });
 
     describe("when event is currently in progress", () => {
-      beforeEach(async () => {
+      const assumedTokenId = 1;
+      const paidEventRsvpCost = ethToWei(0.2);
+
+      const composeLiveEvent = (rsvpPrice: string) => async () => {
         const now = nowInSeconds();
 
         // Create an event that starts in one hour, and lasts for one day
@@ -321,15 +324,109 @@ describe("Party", () => {
         await setupParty(signers.host, {
           eventStartDateInSeconds: startTime,
           eventDurationInSeconds: duration,
+          rsvpPrice,
         });
 
         // Advance time by two hours (during the event interval)
         await ethers.provider.send("evm_increaseTime", [hoursInSeconds(2)]);
+      };
+
+      const setupFreeEvent = composeLiveEvent("0");
+      const setupPaidEvent = composeLiveEvent(paidEventRsvpCost.toString());
+
+      const rsvpToLiveEvent = async (options: { account: Wallet; rsvpStake: BigNumber }) => {
+        const { account, rsvpStake } = options;
+        await party.connect(account).rsvp(assumedTokenId, { value: rsvpStake.toString() });
+      };
+
+      const getGasCost = (receipt: ContractReceipt) => receipt.gasUsed.mul(receipt.effectiveGasPrice);
+
+      describe("when connected user has RSVP'd to free event", () => {
+        const amountStaked = 0;
+
+        beforeEach(async () => {
+          await setupFreeEvent();
+          await rsvpToLiveEvent({
+            account: attendingUser,
+            rsvpStake: BigNumber.from(amountStaked),
+          });
+        });
+
+        it("emits `ParticipantCheckedIn` event and does not change attendee balance", async () => {
+          const initialBalance = await attendingUser.getBalance();
+
+          const tx = await party.connect(attendingUser).checkIn(assumedTokenId);
+
+          const receipt = await tx.wait();
+          const gasCost = getGasCost(receipt);
+          const expectedBalance = initialBalance.sub(gasCost);
+
+          await expect(tx).to.emit(party, "ParticipantCheckedIn").withArgs(assumedTokenId, attendingUser.address);
+          await expect(attendingUser.getBalance()).to.eventually.eq(expectedBalance);
+        });
       });
 
-      it("reverts when account has not rsvp'd", async () => {
-        const tx = party.connect(randomUser).checkIn(1);
-        await expect(tx).to.be.revertedWithCustomError(party, "PartyContract_Has_Not_RSVPd");
+      describe("when connected user has RSVP'd to event with rsvpPrice", () => {
+        const amountStaked = paidEventRsvpCost;
+
+        beforeEach(async () => {
+          await setupPaidEvent();
+          await rsvpToLiveEvent({
+            account: attendingUser,
+            rsvpStake: BigNumber.from(amountStaked),
+          });
+        });
+
+        it("emits `ParticipantCheckedIn` event and returns stake", async () => {
+          const initialBalance = await attendingUser.getBalance();
+
+          const tx = await party.connect(attendingUser).checkIn(assumedTokenId);
+
+          const receipt = await tx.wait();
+          const gasCost = getGasCost(receipt);
+          const balanceMinusGasCost = initialBalance.sub(gasCost);
+          const expectedBalance = balanceMinusGasCost.add(paidEventRsvpCost);
+
+          await expect(tx).to.emit(party, "ParticipantCheckedIn").withArgs(assumedTokenId, attendingUser.address);
+          await expect(attendingUser.getBalance()).to.eventually.eq(expectedBalance);
+        });
+      });
+
+      describe("when connected user has overpaid while RSVP'ing", () => {
+        const amountStaked = ethToWei(1);
+
+        beforeEach(async () => {
+          await setupFreeEvent();
+          await rsvpToLiveEvent({
+            account: attendingUser,
+            rsvpStake: BigNumber.from(amountStaked),
+          });
+        });
+
+        it("emits `ParticipantCheckedIn` event and returns stake", async () => {
+          const initialBalance = await attendingUser.getBalance();
+
+          const tx = await party.connect(attendingUser).checkIn(assumedTokenId);
+
+          const receipt = await tx.wait();
+          const gasCost = getGasCost(receipt);
+          const balanceMinusGasCost = initialBalance.sub(gasCost);
+          const expectedBalance = balanceMinusGasCost.add(BigNumber.from(amountStaked));
+
+          await expect(tx).to.emit(party, "ParticipantCheckedIn").withArgs(assumedTokenId, attendingUser.address);
+          await expect(attendingUser.getBalance()).to.eventually.eq(expectedBalance);
+        });
+      });
+
+      describe("when connected account has not rsvp'd", () => {
+        beforeEach(async () => {
+          await setupFreeEvent();
+        });
+
+        it("reverts", async () => {
+          const tx = party.connect(notAttendingUser).checkIn(assumedTokenId);
+          await expect(tx).to.be.revertedWithCustomError(party, "PartyContract_Has_Not_RSVPd");
+        });
       });
     });
   });
@@ -341,6 +438,6 @@ describe("Party", () => {
 
 const getTestUserWithEth = async (index: number): Promise<Wallet> => {
   const randomUser = getRandomSigner(index);
-  await setETHBalance(randomUser, ethToWei(1));
+  await setETHBalance(randomUser, ethToWei(100));
   return randomUser;
 };

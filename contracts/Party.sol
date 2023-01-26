@@ -2,6 +2,7 @@
 pragma solidity >=0.8.4;
 
 import "hardhat/console.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
 
 // Generic errors
 error PartyContract_Event_Does_Not_Exist();
@@ -26,6 +27,8 @@ error PartyContract_Event_Has_Ended();
 error PartyContract_Event_Has_Not_Started();
 
 contract Party {
+    using Address for address payable;
+
     /// @notice Tracks the next sequence ID to be assigned to a party.
     uint256 private latestPartyId;
 
@@ -85,6 +88,7 @@ contract Party {
      * @param participant who RSVPd
      * @param rsvpStake amount of eth staked, which will be zero for free events
      */
+    // TODO: Rename to ParticipantConfirmedAttendance
     event AttendeeReplied(uint256 eventId, address participant, uint256 rsvpStake);
 
     /**
@@ -92,7 +96,7 @@ contract Party {
      * @param eventId of the event
      * @param participant who RSVPd
      */
-    event AttendeeCheckedIn(uint256 eventId, address participant);
+    event ParticipantCheckedIn(uint256 eventId, address participant);
 
     constructor() {}
 
@@ -230,8 +234,11 @@ contract Party {
             revert PartyContract_Has_Not_RSVPd();
         }
 
-        // TODO: return their stake, if it's non-zero
-        // TODO: emit checked in
+        if (stake.amount > 0) {
+            payable(msg.sender).sendValue(stake.amount);
+        }
+
+        emit ParticipantCheckedIn(eventId, msg.sender);
     }
 
     /**
