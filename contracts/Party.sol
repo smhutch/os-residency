@@ -53,10 +53,10 @@ contract Party {
     }
 
     /// @notice Maps a party to the party metadata.
-    mapping(uint256 => EventMetadata) idToEventMetadata;
+    mapping(uint256 => EventMetadata) private idToEventMetadata;
 
     /// @notice Maps a party and attendee to their RSVP stake.
-    mapping(uint256 => mapping(address => RsvpStake)) isAndParticipantToRsvpStake;
+    mapping(uint256 => mapping(address => RsvpStake)) private isAndParticipantToRsvpStake;
 
     /**
      * @notice Emitted when an event is created.
@@ -111,7 +111,7 @@ contract Party {
         uint256 eventStartDateInSeconds,
         uint256 eventDurationInSeconds
     ) external returns (uint256 eventId) {
-        uint256 id = ++latestPartyId;
+        eventId = ++latestPartyId;
 
         if (maxParticipantCount == 0) {
             revert PartyContract_Event_Must_Allow_Participants();
@@ -137,10 +137,10 @@ contract Party {
             eventEndDateInSeconds: eventEndDateInSeconds
         });
 
-        idToEventMetadata[id] = party;
+        idToEventMetadata[eventId] = party;
 
         emit EventCreated(
-            id,
+            eventId,
             party.organizer,
             party.name,
             party.maxParticipantCount,
@@ -148,8 +148,6 @@ contract Party {
             party.eventStartDateInSeconds,
             party.eventEndDateInSeconds
         );
-
-        return id;
     }
 
     /**
