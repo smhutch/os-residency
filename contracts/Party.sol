@@ -151,20 +151,6 @@ contract Party {
     }
 
     /**
-     * @notice Returns metadata related to the event
-     * @param eventId The id of the event.
-     */
-    function getEventMetadata(uint256 eventId) external view returns (string memory name, address organizer) {
-        EventMetadata memory metadata = idToEventMetadata[eventId];
-
-        if (!_doesPartyExist(eventId)) {
-            revert PartyContract_Event_Does_Not_Exist();
-        }
-
-        return (metadata.name, metadata.organizer);
-    }
-
-    /**
      * @notice RSVP for an event. User must sent at least the rsvpPrice in ETH.
      * @param eventId The id of the event.
      */
@@ -252,6 +238,20 @@ contract Party {
 
         // TODO: check if msg.sender is the organizer
         // TODO: think about how to find all participants that did not check-in
+    }
+
+    /**
+     * @notice Returns metadata related to the event
+     * @param eventId The id of the event.
+     */
+    function getEventMetadata(uint256 eventId) external view returns (string memory name, address organizer) {
+        EventMetadata memory metadata = idToEventMetadata[eventId];
+
+        if (!_doesPartyExist(eventId)) {
+            revert PartyContract_Event_Does_Not_Exist();
+        }
+
+        return (metadata.name, metadata.organizer);
     }
 
     /**
